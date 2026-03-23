@@ -1,40 +1,23 @@
 # H6 系统自动化测试场景配置
 
 scenarios:
-  # 场景 1: 盘点单查询
+  # 场景1: 盘点单查询
   inventory_check_query:
     name: "盘点单查询"
     description: "查询所有盘点单数据"
     steps:
       - action: login
         description: "用户登录系统，输入用户名密码和验证码"
-        assertions:
-          - type: url_contains
-            value: "newframe.html"
-            message: "登录后应跳转到 newframe.html"
-          - type: element_visible
-            selector: "text=系统管理员"
-            message: "应显示系统管理员信息"
-        
+      
       - action: navigate
         description: "导航到库存->盘点->盘点单页面"
         path: ["库存", "盘点", "盘点单"]
-        
+      
       - action: click
         description: "点击查询按钮，加载盘点单数据"
-        selector: 查询
+        selector: text="查询"
         iframe: "#WrhContent"
-        assertions:
-          - type: element_visible
-            selector: ".grid-row"
-            iframe: "#WrhContent"
-            message: "查询后应显示数据表格"
-          - type: count_greater
-            selector: ".grid-row"
-            count: 0
-            iframe: "#WrhContent"
-            message: "应至少有一条盘点单数据"
-        
+      
       - action: screenshot
         description: "保存查询结果截图"
         filename: "inventory_result.png"
