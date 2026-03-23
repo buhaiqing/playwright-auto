@@ -5,12 +5,20 @@ YAML 测试场景执行器
 支持每个步骤的 description 描述输出
 """
 
-from pickle import TRUE
 import yaml
 import os
 import time
+import logging
 from playwright.sync_api import sync_playwright, Page
 from dotenv import load_dotenv
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -20,6 +28,11 @@ PASSWORD = os.getenv("PASSWORD")
 HEADED = os.getenv("HEADED", "true").lower() == "true"
 BROWSER = os.getenv("BROWSER", "chromium").lower()
 SCREENSHOT_DIR = os.getenv("SCREENSHOT_DIR", "screenshots")
+
+# 默认超时设置（毫秒）
+DEFAULT_TIMEOUT = 30000
+ELEMENT_WAIT_TIMEOUT = 10000
+NETWORK_WAIT_TIMEOUT = 5000
 
 
 class ScenarioExecutor:
@@ -45,7 +58,7 @@ class ScenarioExecutor:
         action_type = action.get("action")
         description = action.get("description", "")
         iframe = action.get("iframe")  # iframe选择器
-        exact = action.get("exact") or True
+        exact = action.get("exact", True)
 
         # 打印步骤信息
         self._print_step_header(step_num, total_steps, action_type, description, iframe)
@@ -67,12 +80,12 @@ class ScenarioExecutor:
         elif action_type == "switch_frame":
             result = self._do_switch_frame(action.get("iframe"))
         else:
-            print(f"    ⚠️ 未知动作: {action_type}")
+            logger.warning(f"未知动作：{action_type}")
             return False
-
+        
         # 打印执行结果
         if result:
-            print(f"    ✅ 步骤完成")
+            logger.info("步骤完成")
         return result
 
     def _print_step_header(
@@ -85,106 +98,165 @@ class ScenarioExecutor:
     ):
         """打印步骤标题"""
         iframe_info = f" [iframe: {iframe}]" if iframe else ""
-        print(
-            f"\n  📍 步骤 {step_num}/{total_steps}: [{action_type.upper()}]{iframe_info}"
-        )
+        logger.info(f"步骤 {step_num}/{total_steps}: [{action_type.upper()}]{iframe_info}")
         if description:
-            print(f"     📝 {description}")
+            logger.info(f"  {description}")
 
     def _do_login(self) -> bool:
-        """执行登录"""
+        """执行登录
+            
+        Returns:
+            bool: 登录是否成功
+        """
+        # 导航到登录页
         self.page.goto(f"{URL}/www/view/entry3.html")
         self.page.wait_for_load_state("networkidle")
-
+    
         # 填写凭证
-        self.page.fill('input[placeholder="手机号/用户名"]', USERNAME)
-        self.page.fill('input[placeholder="密码"]', PASSWORD)
-
+        username_input = self.page.locator('input[placeholder="手机号/用户名"]')
+        password_input = self.page.locator('input[placeholder="密码"]')
+            
+        username_input.wait_for(state='visible', timeout=ELEMENT_WAIT_TIMEOUT)
+        username_input.fill(USERNAME)
+            
+        password_input.wait_for(state='visible', timeout=ELEMENT_WAIT_TIMEOUT)
+        password_input.fill(PASSWORD)
+    
         # 验证码处理（截图后等待人工输入）
         captcha_path = "temp_captcha.png"
+        captcha_locator = self.page.locator('.verify-code-img, img[src*="captcha"]')
         try:
-            self.page.locator('.verify-code-img, img[src*="captcha"]').screenshot(
-                path=captcha_path
-            )
-            print(f"     📸 验证码已保存: {captcha_path}")
-        except:
+            captcha_locator.wait_for(state='visible', timeout=5000)
+            captcha_locator.screenshot(path=captcha_path)
+            logger.info(f"验证码已保存：{captcha_path}")
+        except Exception:
+            # 验证码可能不可见或不存在，继续流程
             pass
-
-        captcha = input("     🔑 请输入验证码: ")
-        self.page.fill('input[placeholder="验证码"]', captcha)
-
-        # 点击登录
-        self.page.click('button:has-text("登录")')
-        self.page.wait_for_url("**/newframe.html**", timeout=30000)
+    
+        captcha = input("     🔑 请输入验证码：")
+        captcha_input = self.page.locator('input[placeholder="验证码"]')
+        captcha_input.wait_for(state='visible', timeout=ELEMENT_WAIT_TIMEOUT)
+        captcha_input.fill(captcha)
+    
+        # 点击登录并等待跳转
+        login_button = self.page.locator('button:has-text("登录")')
+        login_button.click()
+        self.page.wait_for_url("**/newframe.html**", timeout=DEFAULT_TIMEOUT)
         return True
 
     def _do_navigate(self, path: list) -> bool:
-        """执行导航"""
-        print(f"     🧭 导航路径: {' -> '.join(path)}")
+        """执行导航
+
+        Args:
+            path: 导航路径列表
+
+        Returns:
+            bool: 导航是否成功
+        """
+        logger.info(f"导航路径：{' -> '.join(path)}")
         for item in path:
-            self.page.click(f"text={item}")
-            time.sleep(0.5)
+            # 使用智能等待：等待元素可见且可点击
+            locator = self.page.locator(f"text={item}")
+            locator.wait_for(state="visible", timeout=10000)
+            locator.click()
+            # 等待网络空闲或页面加载完成，替代固定等待
+            try:
+                self.page.wait_for_load_state("networkidle", timeout=5000)
+            except:
+                # 如果超时，说明没有网络请求，继续下一步
+                pass
         return True
 
     def _do_click(self, selector: str, iframe: str = None, exact: bool = True) -> bool:
         """执行点击
-
+        
         Args:
             selector: 元素选择器
-            iframe: iframe选择器，如 "iframe#WrhContent"
+            iframe: iframe 选择器，如 "iframe#WrhContent"
+            exact: 是否精确匹配文本
+            
+        Returns:
+            bool: 操作是否成功
         """
         if iframe:
-            # if iframe.startswith("iframe"):
-            #     iframe = iframe[len("iframe") :]
-            print(f"     🖱️ 点击元素: {selector}")
-            print(f"        在iframe中: {iframe}")
-            print(f"        excat: {exact}")
-            # 等待iframe加载并点击
-            self.page.wait_for_selector(selector=iframe, timeout=30000)
-
-            # self.page.frame_locator(selector=iframe).locator(selector_or_locator=selector).click()
-            self.page.frame_locator(selector=iframe).get_by_text(
-                text=selector, exact=exact
-            ).click()
-
-            # self.page.frame_locator(iframe).locator(selector).click()
+            logger.info(f"点击元素：{selector} (iframe: {iframe}, 精确匹配：{exact})")
+            
+            # 智能等待 iframe 加载完成
+            iframe_locator = self.page.locator(iframe)
+            iframe_locator.wait_for(state='attached', timeout=30000)
+            
+            # 在 iframe 中查找并等待元素
+            frame = self.page.frame_locator(iframe)
+            element = frame.get_by_text(text=selector, exact=exact)
+            element.wait_for(state='visible', timeout=10000)
+            element.click()
         else:
-            print(f"     🖱️ 点击元素: {selector}")
-            self.page.click(selector)
-        time.sleep(1)
+            logger.info(f"点击元素：{selector}")
+            # 智能等待元素可点击
+            locator = self.page.locator(selector)
+            locator.wait_for(state='visible', timeout=10000)
+            locator.click()
+        
+        # 等待导航或网络请求完成（如果有）
+        try:
+            self.page.wait_for_load_state('networkidle', timeout=3000)
+        except:
+            pass
+        
         return True
 
     def _do_fill(self, selector: str, value: str, iframe: str = None) -> bool:
         """执行填写
-
+        
         Args:
             selector: 元素选择器
             value: 填写值
-            iframe: iframe选择器
+            iframe: iframe 选择器
+            
+        Returns:
+            bool: 操作是否成功
         """
         if iframe:
-            print(f"     ⌨️ 填写内容: {selector}")
-            print(f"        值: {value}")
-            print(f"        在iframe中: {iframe}")
-            # 等待iframe加载并填写
-            self.page.wait_for_selector(iframe, timeout=10000)
-            self.page.frame_locator(iframe).locator(selector).wait_for(timeout=10000)
-            self.page.frame_locator(iframe).locator(selector).fill(value)
+            logger.info(f"填写内容：{selector} = {value} (iframe: {iframe})")
+            
+            # 智能等待 iframe 和输入框
+            iframe_locator = self.page.locator(iframe)
+            iframe_locator.wait_for(state='attached', timeout=10000)
+            
+            frame = self.page.frame_locator(iframe)
+            input_element = frame.locator(selector)
+            input_element.wait_for(state='visible', timeout=10000)
+            
+            # 清空并填写
+            input_element.clear()
+            input_element.fill(value)
         else:
-            print(f"     ⌨️ 填写内容: {selector}")
-            print(f"        值: {value}")
-            self.page.fill(selector, value)
+            logger.info(f"填写内容：{selector} = {value}")
+            # 智能等待输入框
+            locator = self.page.locator(selector)
+            locator.wait_for(state='visible', timeout=10000)
+            locator.clear()
+            locator.fill(value)
         return True
 
     def _do_switch_frame(self, iframe: str) -> bool:
-        """切换iframe上下文
+        """切换 iframe 上下文
 
         Args:
-            iframe: iframe选择器
+            iframe: iframe 选择器
+
+        Returns:
+            bool: 操作是否成功
         """
-        print(f"     🔄 切换到iframe: {iframe}")
-        # 验证iframe存在
-        self.page.wait_for_selector(iframe, timeout=30000)
+        logger.info(f"切换到 iframe: {iframe}")
+        # 智能等待 iframe 附加到 DOM
+        iframe_locator = self.page.locator(iframe)
+        iframe_locator.wait_for(state="attached", timeout=30000)
+        # 进一步等待 iframe 内容加载完成
+        try:
+            iframe_locator.wait_for(state="visible", timeout=5000)
+        except:
+            pass
         return True
 
     def _do_screenshot(self, filename: str) -> bool:
@@ -193,78 +265,129 @@ class ScenarioExecutor:
         filepath = f"{SCREENSHOT_DIR}/{timestamp}_{filename}"
         os.makedirs(SCREENSHOT_DIR, exist_ok=True)
         self.page.screenshot(path=filepath)
-        print(f"     📸 截图保存：{filepath}")
+        logger.info(f"截图保存：{filepath}")
         return True
 
     def _do_wait(self, seconds: int) -> bool:
-        """执行等待"""
-        print(f"     ⏱️ 等待 {seconds} 秒...")
+        """执行等待
+
+        注意：仅在必要时使用固定等待，优先使用智能等待
+
+        Args:
+            seconds: 等待秒数
+
+        Returns:
+            bool: 操作是否成功
+        """
+        logger.info(f"等待 {seconds} 秒...")
         time.sleep(seconds)
         return True
 
-    def run_scenario(self, scenario_id: str, yaml_file: str = "test_scenarios.yaml"):
-        """运行指定场景"""
+    def run_scenario(self, scenario_id: str, yaml_file: str = "test_scenarios.yaml", max_retries: int = 1):
+        """运行指定场景
+        
+        Args:
+            scenario_id: 场景 ID
+            yaml_file: YAML 配置文件路径
+            max_retries: 最大重试次数，默认 1 次
+            
+        Returns:
+            bool: 场景执行是否成功
+        """
         config = self.load_scenarios(yaml_file)
         scenario = config["scenarios"].get(scenario_id)
 
         if not scenario:
-            print(f"❌ 场景未找到: {scenario_id}")
+            logger.error(f"场景未找到：{scenario_id}")
             return False
 
-        print("=" * 60)
-        print(f"🚀 开始执行场景: {scenario['name']}")
-        print(f"📝 场景描述: {scenario['description']}")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info(f"开始执行场景：{scenario['name']}")
+        logger.info(f"场景描述：{scenario['description']}")
+        logger.info("=" * 60)
 
         steps = scenario.get("steps", [])
         total_steps = len(steps)
-        print(f"\n📋 共 {total_steps} 个步骤待执行\n")
+        logger.info(f"共 {total_steps} 个步骤待执行")
 
-        for i, step in enumerate(steps, 1):
-            try:
-                success = self.execute_action(step, i, total_steps)
-                if not success:
-                    print(f"\n    ❌ 步骤 {i} 执行失败")
-                    self.page.screenshot(path=f"error_step_{i}.png")
-                    print(f"    📸 错误截图已保存: error_step_{i}.png")
-                    return False
-            except Exception as e:
-                print(f"\n    ❌ 步骤 {i} 异常: {e}")
-                self.page.screenshot(path=f"error_step_{i}.png")
-                return False
+        for attempt in range(max_retries + 1):
+            if attempt > 0:
+                logger.info(f"第 {attempt + 1} 次重试场景...")
+            
+            success = True
+            for i, step in enumerate(steps, 1):
+                try:
+                    result = self.execute_action(step, i, total_steps)
+                    if not result:
+                        logger.error(f"步骤 {i} 执行失败")
+                        error_screenshot = f"error_step_{i}_attempt_{attempt + 1}.png"
+                        self.page.screenshot(path=error_screenshot)
+                        logger.error(f"错误截图已保存：{error_screenshot}")
+                        success = False
+                        break
+                except Exception as e:
+                    logger.error(f"步骤 {i} 异常：{e}")
+                    error_screenshot = f"error_step_{i}_attempt_{attempt + 1}.png"
+                    self.page.screenshot(path=error_screenshot)
+                    logger.error(f"错误截图已保存：{error_screenshot}")
+                    success = False
+                    break
+            
+            if success:
+                break
 
-        print("\n" + "=" * 60)
-        print(f"✅ 场景完成: {scenario['name']}")
-        print("=" * 60 + "\n")
-        return True
+        if success:
+            logger.info("=" * 60)
+            logger.info(f"场景完成：{scenario['name']}")
+            logger.info("=" * 60)
+        else:
+            logger.error("=" * 60)
+            logger.error(f"场景失败：{scenario['name']}（已重试{max_retries}次）")
+            logger.error("=" * 60)
+        
+        return success
 
-    def run_all_scenarios(self, yaml_file: str = "test_scenarios.yaml"):
-        """运行所有场景"""
+    def run_all_scenarios(self, yaml_file: str = "test_scenarios.yaml", inter_scenario_delay: int = 2):
+        """运行所有场景
+            
+        Args:
+            yaml_file: YAML 配置文件路径
+            inter_scenario_delay: 场景间延迟（秒），默认 2 秒
+                
+        Returns:
+            dict: 执行结果字典
+        """
         config = self.load_scenarios(yaml_file)
         scenarios = config["scenarios"]
-
-        print(f"\n{'=' * 60}")
-        print(f"📋 共有 {len(scenarios)} 个场景待执行")
-        print(f"{'=' * 60}\n")
-
+    
+        logger.info("=" * 60)
+        logger.info(f"共有 {len(scenarios)} 个场景待执行")
+        logger.info("=" * 60)
+    
         results = {}
-        for scenario_id in scenarios:
+        for idx, scenario_id in enumerate(scenarios):
             success = self.run_scenario(scenario_id, yaml_file)
             results[scenario_id] = success
-            time.sleep(6)  # 场景间暂停
-
+                
+            # 如果不是最后一个场景，添加延迟
+            if idx < len(scenarios) - 1:
+                logger.info(f"等待 {inter_scenario_delay} 秒后继续下一个场景...")
+                time.sleep(inter_scenario_delay)
+    
         # 打印汇总
-        print("\n" + "=" * 60)
-        print("📊 执行结果汇总")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info("执行结果汇总")
+        logger.info("=" * 60)
         for sid, success in results.items():
             scenario_name = config["scenarios"][sid]["name"]
             status = "✅ 通过" if success else "❌ 失败"
-            print(f"  {status} [{sid}] {scenario_name}")
-
+            logger.info(f"  {status} [{sid}] {scenario_name}")
+    
         passed = sum(1 for s in results.values() if s)
         failed = len(results) - passed
-        print(f"\n总计: {passed} 通过, {failed} 失败, {len(results)} 个场景")
+        logger.info(f"总计：{passed} 通过，{failed} 失败，{len(results)} 个场景")
+            
+        return results
 
 
 def main():
@@ -290,14 +413,14 @@ def main():
         try:
             if scenario_id:
                 # 执行指定场景
-                print("执行指定场景")
+                logger.info("执行指定场景")
                 executor.run_scenario(scenario_id)
             else:
                 # 执行所有场景
-                print("执行所有场景")
+                logger.info("执行所有场景")
                 executor.run_all_scenarios()
         except KeyboardInterrupt:
-            print("\n\n⏹️ 用户中断")
+            logger.warning("用户中断")
         finally:
             browser.close()
 
