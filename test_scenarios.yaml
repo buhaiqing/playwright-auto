@@ -1,0 +1,140 @@
+# H6 系统自动化测试场景配置
+
+scenarios:
+  # 场景1: 盘点单查询
+  inventory_check_query:
+    name: "盘点单查询"
+    description: "查询所有盘点单数据"
+    steps:
+      - action: login
+        description: "用户登录系统，输入用户名密码和验证码"
+      
+      - action: navigate
+        description: "导航到库存->盘点->盘点单页面"
+        path: ["库存", "盘点", "盘点单"]
+      
+      - action: click
+        description: "点击查询按钮，加载盘点单数据"
+        selector: 查询
+        iframe: "#WrhContent"
+      
+      - action: screenshot
+        description: "保存查询结果截图"
+        filename: "inventory_result.png"
+
+  # 场景2: 按状态筛选盘点单
+  inventory_check_by_status:
+    name: "按状态筛选盘点单"
+    description: "按已完成状态筛选盘点单"
+    steps:
+      - action: login
+        description: "用户登录系统"
+      
+      - action: navigate
+        description: "导航到盘点单页面"
+        path: ["库存", "盘点", "盘点单"]
+      
+      - action: click
+        description: "点击'已完成'筛选按钮"
+        selector: "button:has-text('已完成')"
+      
+      - action: click
+        description: "点击查询按钮应用筛选"
+        selector: "button:has-text('查询')"
+      
+      - action: screenshot
+        description: "保存已完成状态的盘点单截图"
+        filename: "inventory_completed.png"
+
+  # 场景3: 库存调整查询
+  inventory_adjustment:
+    name: "库存调整查询"
+    description: "查询库存调整单"
+    steps:
+      - action: login
+        description: "用户登录系统"
+      
+      - action: navigate
+        description: "导航到库存->库存调整页面"
+        path: ["库存", "库存调整"]
+      
+      - action: click
+        description: "点击查询按钮"
+        selector: "button:has-text('查询')"
+      
+      - action: screenshot
+        description: "保存库存调整单查询结果"
+        filename: "adjustment_result.png"
+
+  # 场景4: 调拨单查询
+  inventory_transfer:
+    name: "调拨单查询"
+    description: "查询调拨单"
+    steps:
+      - action: login
+        description: "用户登录系统"
+      
+      - action: navigate
+        description: "导航到库存->调拨页面"
+        path: ["库存", "调拨"]
+      
+      - action: click
+        description: "点击查询按钮"
+        selector: "button:has-text('查询')"
+      
+      - action: screenshot
+        description: "保存调拨单查询结果"
+        filename: "transfer_result.png"
+
+  # 场景5: 新建盘点单
+  create_inventory_check:
+    name: "新建盘点单"
+    description: "创建新的盘点单"
+    steps:
+      - action: login
+        description: "用户登录系统"
+      
+      - action: navigate
+        description: "导航到盘点单页面"
+        path: ["库存", "盘点", "盘点单"]
+      
+      - action: click
+        description: "点击新建按钮，打开盘点单创建表单"
+        selector: "button:has-text('新建')"
+      
+      - action: fill
+        description: "填写盘点名称"
+        selector: "input[placeholder='盘点名称']"
+        value: "自动化测试盘点"
+      
+      - action: click
+        description: "点击保存按钮，创建盘点单"
+        selector: "button:has-text('保存')"
+
+# 测试数据
+test_data:
+  stores:
+    - name: "海鼎未来店"
+      code: "990101"
+    - name: "海鼎测试店"
+      code: "990102"
+  
+  inventory_types:
+    - name: "按商品盘点"
+    - name: "按货架位盘点"
+  
+  statuses:
+    - name: "未审核"
+    - name: "已预审"
+    - name: "已审核"
+    - name: "已完成"
+
+# 验证点
+validations:
+  login_success:
+    - url_contains: "newframe.html"
+    - element_visible: "text=系统管理员"
+  
+  data_loaded:
+    - element_visible: ".grid-row"
+    - element_contains: ".grid-toolbar"
