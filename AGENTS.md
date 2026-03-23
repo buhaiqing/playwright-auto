@@ -86,11 +86,13 @@ mypy scenario_executor.py --ignore-missing-imports
 
 ```
 playwright-auto/
-├── scenario_executor.py    # Main executor - parses YAML and runs scenarios
-├── test_scenarios.yaml     # Test scenario definitions
+├── scenario_executor.py    # Main executor - parses YAML and runs scenarios (with assertions)
+├── test_scenarios.yaml     # Test scenario definitions (with assertions support)
 ├── requirements.txt        # Python dependencies
 ├── specs/                  # Feature specifications
 │   └── assertion_spec.md   # Assertion feature spec
+├── tests/                  # Unit tests
+│   └── test_assertions.py  # Assertion functionality tests
 ├── screenshots/            # Test screenshots (created at runtime)
 ├── .env                    # Environment variables (URL, USERNAME, PASSWORD)
 └── .gitignore
@@ -199,6 +201,19 @@ scenarios:
         filename: "screenshot.png"           # For screenshot
         seconds: 1                           # For wait
         exact: true                          # For click (text matching)
+        
+        # Assertions (executed after step completion)
+        assertions:
+          - type: element_visible
+            selector: ".grid-row"
+            message: "应显示数据表格"
+          - type: text_contains
+            selector: ".grid-toolbar"
+            value: "单据总数"
+            message: "应显示单据统计信息"
+          - type: url_contains
+            value: "newframe.html"
+            message: "应跳转到正确页面"
 ```
 
 ### Playwright Selectors
@@ -260,5 +275,10 @@ PASSWORD=your_password
 
 - The project uses Chinese comments and print statements - maintain this pattern for consistency
 - Emoji icons are used in console output (✅, ❌, 📍, 🖱️, etc.) - maintain this style
-- The `ScenarioExecutor` class is designed to be extended with new action types
+- The `ScenarioExecutor` class includes comprehensive assertion functionality:
+  - 6 standard assertion types (url_contains, element_visible, element_hidden, text_contains, text_equals, count_greater)
+  - Support for multiple assertions per step
+  - Automatic screenshot on assertion failure
+  - Detailed assertion result logging
+  - iframe support for all assertion types
 - Consider using pytest fixtures for browser setup/teardown in future test files

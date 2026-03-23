@@ -41,6 +41,7 @@ class ScenarioExecutor:
     def __init__(self, page: Page):
         self.page = page
         self.results = []
+        self.assertion_results = []  # 存储断言结果
 
     def load_scenarios(self, yaml_file: str) -> dict:
         """加载YAML场景配置"""
@@ -57,7 +58,7 @@ class ScenarioExecutor:
         """
         action_type = action.get("action")
         description = action.get("description", "")
-        iframe = action.get("iframe")  # iframe选择器
+        iframe = action.get("iframe")  # iframe 选择器
         exact = action.get("exact", True)
 
         # 打印步骤信息
@@ -86,6 +87,15 @@ class ScenarioExecutor:
         # 打印执行结果
         if result:
             logger.info("步骤完成")
+        
+        # 执行断言（如果有）
+        assertions = action.get("assertions", [])
+        if assertions and result:
+            logger.info(f"  执行 {len(assertions)} 个断言...")
+            assertion_result = self._do_assertions(assertions, step_num)
+            if not assertion_result:
+                logger.warning(f"  ⚠️   步骤 {step_num} 的断言失败")
+        
         return result
 
     def _print_step_header(
@@ -282,6 +292,299 @@ class ScenarioExecutor:
         logger.info(f"等待 {seconds} 秒...")
         time.sleep(seconds)
         return True
+
+    def _do_assertions(self, assertions: list, step_num: int) -> bool:
+        """执行步骤的所有断言
+        
+        Args:
+            assertions: 断言配置列表
+            step_num: 当前步骤序号
+            
+        Returns:
+            bool: 所有断言是否通过
+        """
+        all_passed = True
+        for i, assertion in enumerate(assertions, 1):
+            assertion_type = assertion.get("type")
+            message = assertion.get("message", f"断言 {i}")
+            
+            logger.info(f"    📍 断言 {i}: {message}")
+            
+            try:
+                if assertion_type == "url_contains":
+                    passed = self._assert_url_contains(assertion)
+                elif assertion_type == "element_visible":
+                    passed = self._assert_element_visible(assertion)
+                elif assertion_type == "element_hidden":
+                    passed = self._assert_element_hidden(assertion)
+                elif assertion_type == "text_contains":
+                    passed = self._assert_text_contains(assertion)
+                elif assertion_type == "text_equals":
+                    passed = self._assert_text_equals(assertion)
+                elif assertion_type == "count_greater":
+                    passed = self._assert_count_greater(assertion)
+                # 向后兼容旧的断言类型
+                elif assertion_type == "text":
+                    passed = self._assert_text(assertion.get("selector"), assertion.get("expected"), assertion.get("iframe"))
+                elif assertion_type == "visible":
+                    passed = self._assert_visible(assertion.get("selector"), assertion.get("iframe"))
+                elif assertion_type == "hidden":
+                    passed = self._assert_hidden(assertion.get("selector"), assertion.get("iframe"))
+                else:
+                    logger.warning(f"      ⚠️  未知断言类型：{assertion_type}")
+                    passed = False
+                
+                # 记录断言结果
+                self.assertion_results.append({
+                    "step": step_num,
+                    "type": assertion_type,
+                    "message": message,
+                    "passed": passed
+                })
+                
+                if passed:
+                    logger.info(f"      ✅ 通过")
+                else:
+                    logger.error(f"      ❌ 失败")
+                    all_passed = False
+                    # 断言失败时截图
+                    error_screenshot = f"assertion_step_{step_num}_assert_{i}.png"
+                    self.page.screenshot(path=error_screenshot)
+                    logger.error(f"      错误截图已保存：{error_screenshot}")
+                    
+            except Exception as e:
+                logger.error(f"      ❌ 异常：{e}")
+                self.assertion_results.append({
+                    "step": step_num,
+                    "type": assertion_type,
+                    "message": message,
+                    "passed": False,
+                    "error": str(e)
+                })
+                all_passed = False
+                # 断言异常时截图
+                error_screenshot = f"assertion_step_{step_num}_assert_{i}_error.png"
+                self.page.screenshot(path=error_screenshot)
+                logger.error(f"      错误截图已保存：{error_screenshot}")
+        
+        return all_passed
+
+    def _assert_text(self, selector: str, expected: str, iframe: str = None) -> bool:
+        """断言文本内容
+
+        Args:
+            selector: 元素选择器
+            expected: 期望的文本内容
+            iframe: iframe 选择器
+
+        Returns:
+            bool: 断言是否通过
+        """
+        if iframe:
+            frame = self.page.frame_locator(iframe)
+            element = frame.locator(selector)
+        else:
+            element = self.page.locator(selector)
+
+        try:
+            element.wait_for(state='visible', timeout=ELEMENT_WAIT_TIMEOUT)
+            actual = element.text_content()
+            return actual == expected
+        except Exception:
+            return False
+
+    def _assert_visible(self, selector: str, iframe: str = None) -> bool:
+        """断言元素可见
+
+        Args:
+            selector: 元素选择器
+            iframe: iframe 选择器
+
+        Returns:
+            bool: 断言是否通过
+        """
+        if iframe:
+            frame = self.page.frame_locator(iframe)
+            element = frame.locator(selector)
+        else:
+            element = self.page.locator(selector)
+
+        try:
+            element.wait_for(state='visible', timeout=ELEMENT_WAIT_TIMEOUT)
+            return True
+        except Exception:
+            return False
+
+    def _assert_hidden(self, selector: str, iframe: str = None) -> bool:
+        """断言元素不可见
+
+        Args:
+            selector: 元素选择器
+            iframe: iframe 选择器
+
+        Returns:
+            bool: 断言是否通过
+        """
+        if iframe:
+            frame = self.page.frame_locator(iframe)
+            element = frame.locator(selector)
+        else:
+            element = self.page.locator(selector)
+
+        try:
+            element.wait_for(state='hidden', timeout=ELEMENT_WAIT_TIMEOUT)
+            return True
+        except Exception:
+            return False
+
+
+    def _assert_url_contains(self, assertion: dict) -> bool:
+        """断言 URL 包含指定字符串
+        
+        Args:
+            assertion: 断言配置，包含 value 字段
+            
+        Returns:
+            bool: 断言是否通过
+        """
+        expected = assertion.get("value", "")
+        current_url = self.page.url
+        passed = expected in current_url
+        logger.info(f"      URL: {current_url}")
+        logger.info(f"      期望包含：{expected}")
+        return passed
+
+    def _assert_element_visible(self, assertion: dict) -> bool:
+        """断言元素可见
+        
+        Args:
+            assertion: 断言配置，包含 selector 和可选的 iframe 字段
+            
+        Returns:
+            bool: 断言是否通过
+        """
+        selector = assertion.get("selector")
+        iframe = assertion.get("iframe")
+        
+        if iframe:
+            frame = self.page.frame_locator(iframe)
+            locator = frame.locator(selector)
+        else:
+            locator = self.page.locator(selector)
+        
+        try:
+            locator.wait_for(state="visible", timeout=5000)
+            return True
+        except:
+            return False
+
+    def _assert_element_hidden(self, assertion: dict) -> bool:
+        """断言元素隐藏
+        
+        Args:
+            assertion: 断言配置，包含 selector 和可选的 iframe 字段
+            
+        Returns:
+            bool: 断言是否通过
+        """
+        selector = assertion.get("selector")
+        iframe = assertion.get("iframe")
+        
+        if iframe:
+            frame = self.page.frame_locator(iframe)
+            locator = frame.locator(selector)
+        else:
+            locator = self.page.locator(selector)
+        
+        try:
+            locator.wait_for(state="hidden", timeout=5000)
+            return True
+        except:
+            return False
+
+    def _assert_text_contains(self, assertion: dict) -> bool:
+        """断言元素文本包含指定字符串
+        
+        Args:
+            assertion: 断言配置，包含 selector、value 和可选的 iframe 字段
+            
+        Returns:
+            bool: 断言是否通过
+        """
+        selector = assertion.get("selector")
+        expected = assertion.get("value", "")
+        iframe = assertion.get("iframe")
+        
+        if iframe:
+            frame = self.page.frame_locator(iframe)
+            locator = frame.locator(selector)
+        else:
+            locator = self.page.locator(selector)
+        
+        try:
+            actual_text = locator.text_content(timeout=5000)
+            passed = expected in actual_text
+            logger.info(f"      实际文本：{actual_text[:100]}...")
+            logger.info(f"      期望包含：{expected}")
+            return passed
+        except:
+            return False
+
+    def _assert_text_equals(self, assertion: dict) -> bool:
+        """断言元素文本完全相等
+        
+        Args:
+            assertion: 断言配置，包含 selector、value 和可选的 iframe 字段
+            
+        Returns:
+            bool: 断言是否通过
+        """
+        selector = assertion.get("selector")
+        expected = assertion.get("value", "")
+        iframe = assertion.get("iframe")
+        
+        if iframe:
+            frame = self.page.frame_locator(iframe)
+            locator = frame.locator(selector)
+        else:
+            locator = self.page.locator(selector)
+        
+        try:
+            actual_text = locator.text_content(timeout=5000)
+            passed = actual_text.strip() == expected
+            logger.info(f"      实际文本：{actual_text[:100]}...")
+            logger.info(f"      期望等于：{expected}")
+            return passed
+        except:
+            return False
+
+    def _assert_count_greater(self, assertion: dict) -> bool:
+        """断言元素数量大于指定值
+        
+        Args:
+            assertion: 断言配置，包含 selector、count 和可选的 iframe 字段
+            
+        Returns:
+            bool: 断言是否通过
+        """
+        selector = assertion.get("selector")
+        expected_count = assertion.get("count", 0)
+        iframe = assertion.get("iframe")
+        
+        if iframe:
+            frame = self.page.frame_locator(iframe)
+            locator = frame.locator(selector)
+        else:
+            locator = self.page.locator(selector)
+        
+        try:
+            actual_count = locator.count()
+            passed = actual_count > expected_count
+            logger.info(f"      实际数量：{actual_count}")
+            logger.info(f"      期望大于：{expected_count}")
+            return passed
+        except:
+            return False
 
     def run_scenario(self, scenario_id: str, yaml_file: str = "test_scenarios.yaml", max_retries: int = 1):
         """运行指定场景

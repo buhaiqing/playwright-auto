@@ -9,6 +9,7 @@
 - 🎯 **零编码** - 无需编写代码，只需配置 YAML 即可完成测试
 - 🔧 **灵活配置** - 支持多种浏览器、有头/无头模式、自定义截图目录
 - 📸 **自动截图** - 失败时自动截图，便于问题排查
+- 🧪 **断言验证** - 支持多种断言类型（URL、元素可见性、文本内容、元素数量等）
 - 🌐 **多浏览器支持** - Chromium、Firefox、WebKit
 - 📊 **详细日志** - 清晰的步骤执行日志和结果汇总
 - 🔄 **iframe 支持** - 自动处理 iframe 上下文切换
@@ -107,6 +108,43 @@ scenarios:
 | `wait` | 延时等待 | `seconds`: 等待秒数 |
 | `switch_frame` | 切换 iframe | `iframe`: iframe 选择器 |
 
+### 断言功能
+
+每个步骤后可以添加多个断言验证：
+
+```yaml
+steps:
+  - action: click
+    description: "点击查询按钮"
+    selector: "button:has-text('查询')"
+    iframe: "#WrhContent"
+    assertions:
+      - type: element_visible
+        selector: ".grid-row"
+        iframe: "#WrhContent"
+        message: "查询后应显示数据表格"
+      - type: text_contains
+        selector: ".grid-toolbar"
+        value: "单据总数"
+        message: "应显示单据统计信息"
+      - type: count_greater
+        selector: ".grid-row"
+        count: 0
+        iframe: "#WrhContent"
+        message: "应至少有一条数据"
+```
+
+#### 支持的断言类型
+
+| 断言类型 | 参数 | 说明 |
+|----------|------|------|
+| `url_contains` | `value` | 验证 URL 包含指定字符串 |
+| `element_visible` | `selector`, `iframe?` | 验证元素可见 |
+| `element_hidden` | `selector`, `iframe?` | 验证元素隐藏 |
+| `text_contains` | `selector`, `value`, `iframe?` | 验证元素文本包含字符串 |
+| `text_equals` | `selector`, `value`, `iframe?` | 验证元素文本完全相等 |
+| `count_greater` | `selector`, `count`, `iframe?` | 验证元素数量大于指定值 |
+
 ### 命令行参数
 
 ```bash
@@ -150,8 +188,8 @@ python scenario_executor.py inventory_check_query
 
 ```
 playwright-auto/
-├── scenario_executor.py    # 核心执行器
-├── test_scenarios.yaml     # 测试场景配置
+├── scenario_executor.py    # 核心执行器（包含断言功能）
+├── test_scenarios.yaml     # 测试场景配置（含断言）
 ├── requirements.txt        # Python 依赖
 ├── .env                    # 环境变量（需自行创建）
 ├── .env.example           # 环境变量模板
@@ -159,6 +197,8 @@ playwright-auto/
 ├── specs/                 # 规格说明书
 │   ├── scenario_executor.md
 │   └── assertion_spec.md
+├── tests/                 # 单元测试
+│   └── test_assertions.py # 断言功能测试
 └── screenshots/           # 截图输出目录（运行时创建）
 ```
 
